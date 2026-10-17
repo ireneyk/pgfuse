@@ -339,8 +339,3 @@ fusermount3 -u /mnt/pgfs
 
 ---
 
-## Author Attribution
-
-**Irene Therese Joseph**  
-*Senior Linux Systems Engineer*  
-*Specializing in VFS, Distributed Systems, Software-Defined Storage & Linux Systems Engineering*

@@ -1,8 +1,6 @@
 # PG-FS: PostgreSQL-Backed Virtual File System
 
-**Author:** Irene Therese Joseph  
-**Role:** Senior Linux Systems Engineer  
-**Specialization:** Linux Kernel VFS, Distributed Storage Systems, Cloud-Native Storage Abstractions  
+
 
 ---
 

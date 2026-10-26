@@ -138,7 +138,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Handy diagnostic view to show interviewers storage statistics
+-- Diagnostic view for inspecting storage statistics and block metrics
 CREATE OR REPLACE VIEW v_pgfuse_storage_summary AS
 SELECT 
     (SELECT COUNT(*) FROM pgfuse_inodes WHERE (mode & 61440) = 32768) AS total_files,

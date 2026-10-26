@@ -57,7 +57,7 @@ Standard database storage often stores whole files as huge BLOBs or uses flat pa
 
 ## 📁 Project Structure
 
-Only the essential files are kept — clean, minimal, and easy to explain:
+Clean, modular architecture organized for reliability and maintainability:
 
 ```
 pgfuse/
@@ -70,14 +70,14 @@ pgfuse/
 ├── Makefile           # Build script with auto-detection for libfuse3 & libpq
 ├── Dockerfile         # One-command container build and test environment
 ├── .gitignore         # Build artifact exclusions
-└── README.md          # Project documentation and interview guide
+└── README.md          # Project documentation and architecture guide
 ```
 
 ---
 
 ## 🚀 Quick Start (Using Docker)
 
-The easiest way to build, test, and demonstrate `pgfuse` is with Docker.
+The easiest way to build, test, and run `pgfuse` is with Docker.
 
 ### 1. Build the Docker image
 ```bash
@@ -94,16 +94,16 @@ Once started, the container automatically starts PostgreSQL, creates the databas
 
 ---
 
-## 💡 How to Demonstrate to an Interviewer
+## 💻 Interactive Usage & Verification
 
-Here is a quick, step-by-step walkthrough you can follow live in an interview:
+Here is an end-to-end verification workflow demonstrating the virtual filesystem in action:
 
-### Step 1: Create a mount folder and mount `pgfuse`
+### Step 1: Create a mount point and mount `pgfuse`
 ```bash
 mkdir -p /mnt/myfolder
 ./pgfuse /mnt/myfolder
 ```
-> **What to explain:** "This starts our userspace daemon and mounts it at `/mnt/myfolder`. Any standard Linux command running in this folder will now be intercepted by our C program and translated into SQL queries."
+> **Under the hood:** This starts the userspace daemon and mounts it at `/mnt/myfolder`. Any standard Linux command executed in this path is intercepted by the daemon and mapped to PostgreSQL queries.
 
 ---
 
@@ -113,42 +113,41 @@ mkdir -p /mnt/myfolder/documents
 echo "Hello from pgfuse! This text is stored in PostgreSQL." > /mnt/myfolder/documents/test.txt
 cat /mnt/myfolder/documents/test.txt
 ```
-> **What to explain:** "Standard Linux commands like `mkdir`, `echo`, and `cat` work completely transparently. The kernel thinks it is talking to a normal hard drive, but the data is going through FUSE into PostgreSQL."
+> **Under the hood:** Standard Linux commands like `mkdir`, `echo`, and `cat` operate transparently. The kernel treats `/mnt/myfolder` as standard POSIX storage while reads and writes are dispatched to PostgreSQL via `libpq`.
 
 ---
 
-### Step 3: Check file details with `stat` and `ls -la`
+### Step 3: Inspect file metadata with `stat` and `ls -la`
 ```bash
 ls -la /mnt/myfolder/documents
 stat /mnt/myfolder/documents/test.txt
 ```
-> **What to explain:** "`getattr` queries our `pgfuse_inodes` table to return the exact file size, file mode (permissions), owner ID, and modified timestamps."
+> **Under the hood:** The `getattr` callback queries `pgfuse_inodes` to return exact file size, mode (permissions), owner ID, and modified timestamps.
 
 ---
 
-### Step 4: Show the data inside PostgreSQL! (The "Aha!" Moment)
-Check the directory table:
+### Step 4: Inspect relational storage in PostgreSQL
+Check the directory hierarchy:
 ```bash
 sudo -u postgres psql -d pgfs -c "SELECT * FROM pgfuse_dentries;"
 ```
-You will see:
-* `documents` pointing to an Inode ID.
-* `test.txt` inside `documents` pointing to another Inode ID.
+* `documents` maps to its directory Inode ID.
+* `test.txt` inside `documents` maps to its file Inode ID.
 
-Check the raw file chunk data:
+Check the 64KB chunk storage:
 ```bash
 sudo -u postgres psql -d pgfs -c "SELECT ino, chunk_index, chunk_size FROM pgfuse_chunks;"
 ```
 
-Check the overall storage summary view:
+Inspect overall filesystem metrics:
 ```bash
 sudo -u postgres psql -d pgfs -c "SELECT * FROM v_pgfuse_storage_summary;"
 ```
-> **What to explain:** "Here is proof that the file is not on disk. In PostgreSQL, `pgfuse_dentries` shows the directory hierarchy, `pgfuse_inodes` stores the metadata, and `pgfuse_chunks` holds the 64KB binary blocks."
+> **Under the hood:** This confirms relational persistence: `pgfuse_dentries` manages the hierarchy, `pgfuse_inodes` retains metadata, and `pgfuse_chunks` stores 64KB raw binary blocks.
 
 ---
 
-### Step 5: Unmount when done
+### Step 5: Unmount when finished
 ```bash
 fusermount3 -u /mnt/myfolder
 ```
@@ -157,7 +156,7 @@ fusermount3 -u /mnt/myfolder
 
 ## 🛠️ Native Build (Without Docker)
 
-If you are running on an Ubuntu/Debian system with PostgreSQL installed locally:
+For environments running Ubuntu/Debian with a local PostgreSQL instance:
 
 ### 1. Install prerequisites
 ```bash
@@ -181,16 +180,18 @@ mkdir -p /mnt/pgfuse
 
 ---
 
-## 📋 Interview Cheatsheet: Key Questions & Answers
+## ⚙️ Design Decisions & Technical Architecture
 
-**Q: What is FUSE?**  
-**A:** Filesystem in Userspace. It allows developers to create custom filesystems in regular user code without writing complex or risky kernel drivers. The Linux kernel forwards filesystem calls (`open`, `read`, `write`, `mkdir`) through `/dev/fuse` to our C application.
+### 1. Why FUSE 3?
+FUSE (Filesystem in Userspace) allows creating custom filesystems in userspace without writing or loading unstable kernel drivers. The Linux kernel passes VFS system calls (`open`, `read`, `write`, `mkdir`) across `/dev/fuse` to userspace callback handlers.
 
-**Q: Why separate Inodes and Dentries?**  
-**A:** In standard POSIX filesystems, a file's identity and metadata are stored in an Inode, while its name and location live in a Directory Entry (dentry). By splitting them in PostgreSQL, renaming a directory or moving a file is an $O(1)$ operation (updating 1 row in `pgfuse_dentries`), rather than updating every path string in the whole subtree.
+### 2. Why Separate Inodes and Dentries?
+In traditional POSIX filesystems, file metadata is decoupled from directory naming. By mirroring this separation in PostgreSQL:
+* **$O(1)$ Atomic Renames:** Renaming a folder updates only a single row in `pgfuse_dentries`, regardless of how many thousands of files reside in the subtree.
+* **Hard Links:** Multiple dentry records can reference the same Inode without duplicating data chunks or file metadata.
 
-**Q: Why slice files into 64KB chunks instead of one big column?**  
-**A:** If a file is 500MB and a user edits 10 bytes in the middle, storing the whole file in one `BYTEA` column would require reading and rewriting all 500MB to disk and database write-ahead logs. With 64KB chunking, we only fetch, modify, and save the single affected 64KB chunk.
+### 3. Why 64KB Chunk Striping Instead of Monolithic BLOBs?
+Storing entire files as single database BLOBs creates severe write amplification. For instance, modifying 10 bytes in a 500MB file would force the database to read, rewrite, and write-ahead-log (WAL) all 500MB. With 64KB striping, only the specific 64KB chunk spanning the targeted byte offset is read and updated.
 
-**Q: Why do you need a connection pool?**  
-**A:** FUSE handles filesystem calls on multiple threads in parallel for speed. PostgreSQL's `libpq` client library is not thread-safe on a single connection. Our connection pool maintains 8 active connections and uses a mutex lock and condition variable so worker threads safely borrow and return connections without conflicts.
+### 4. Why a Dedicated Connection Pool?
+The FUSE kernel driver dispatches file operations concurrently across worker threads. Because `libpq` connections are not thread-safe, sharing a single connection causes memory and protocol corruption. `pgfuse` implements an 8-connection pool synchronized via POSIX mutexes (`pthread_mutex_t`) and condition variables (`pthread_cond_t`) with automatic connection health verification (`PQstatus` / `PQreset`).

@@ -70,7 +70,6 @@ pgfuse/
 ├── Makefile           # Build script with auto-detection for libfuse3 & libpq
 ├── Dockerfile         # One-command container build and test environment
 ├── .gitignore         # Build artifact exclusions
-├── .dockerignore       # Docker build exclusions
 └── README.md          # Project documentation and interview guide
 ```
 

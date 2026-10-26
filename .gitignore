@@ -1,0 +1,26 @@
+# Binaries and object files
+*.o
+*.so
+*.a
+pgfuse
+pgfs
+bin/
+
+# Temporary and editor files
+*~
+*.swp
+*.swo
+.DS_Store
+.vscode/
+.idea/
+
+# Core dumps and logs
+core
+core.*
+vgcore.*
+*.log
+
+# Test artifacts
+/test_mount/
+/mnt/pgfuse/
+/mnt/pgfs/

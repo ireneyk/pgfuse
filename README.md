@@ -75,48 +75,57 @@ pgfuse/
 
 ---
 
-## 🚀 Quick Start (Using Docker)
+## 📊 Complete Execution Guide: Commands, Outputs & Explanations
 
-The easiest way to build, test, and run `pgfuse` is with Docker.
+> [!IMPORTANT]
+> **Understanding the Two Terminal Environments:**  
+> `pgfuse` is a Linux program that requires the Linux kernel (`FUSE 3`). On Windows, you cannot run `./pgfuse` directly in PowerShell because Windows does not have the Linux FUSE kernel driver.  
+> 
+> * **Phase 1 (Windows PowerShell):** You use Docker to launch a Linux container. Your prompt looks like:  
+>   `PS C:\Users\...\pgfuse>`  
+> * **Phase 2 (Linux Container):** Once Docker starts, your prompt changes to Linux:  
+>   `root@<container-id>:/app#`  
+>   **All filesystem commands (`./pgfuse`, `mkdir`, `echo`, `psql`) must be run inside this Linux prompt!**
 
-### 1. Build the Docker image
-```bash
-docker build -t pgfuse .
-```
+---
 
-### 2. Run the container
-```bash
+### Master Execution Table
+
+| Environment | Step / Action | Command to Run | Expected Terminal Output | Easy Explanation of Output |
+| :--- | :--- | :--- | :--- | :--- |
+| **Windows PowerShell**<br>`PS C:\...> ` | **1. Open Docker Desktop** | *(Launch Docker Desktop from Windows Start Menu)* | Docker Desktop icon in taskbar shows green / running | Starts the Docker engine on your PC so it can run Linux containers. |
+| **Windows PowerShell**<br>`PS C:\...> ` | **2. Build Container** | `docker build -t pgfuse .` | `[+] Building ...`<br>`=> => naming to docker.io/library/pgfuse:latest` | Compiles your project inside an Ubuntu 22.04 image with GCC, FUSE 3, and PostgreSQL installed. |
+| **Windows PowerShell**<br>`PS C:\...> ` | **3. Run Linux Container** | `docker run --privileged -it --rm pgfuse` | `* Starting PostgreSQL 14 database server`<br>`CREATE DATABASE`<br>`Successfully built pgfuse with fuse3 and libpq.`<br>`[PGFUSE READY] Container is up!`<br><br>👉 **Prompt changes to:**<br>`root@b774f64f403c:/app#` | Starts PostgreSQL, loads `schema.sql`, compiles the binary, and drops you into a **Linux bash prompt**. Notice your prompt is now `root@...:/app#`! |
+| **Linux Container**<br>`root@...:/app#` | **4. Mount Filesystem** | `mkdir -p /mnt/myfolder`<br>`./pgfuse /mnt/myfolder` | `==========================================================`<br>` pgfuse: PostgreSQL-Backed Virtual File System`<br>` Engine: 1.0.0 \| Extents: 64 KB \| Pool: 8 Channels`<br>` Status: Active Mount - ACID POSIX VFS Translation Live`<br>`==========================================================` | **The virtual disk is alive!** `pgfuse` opens 8 database connections and mounts at `/mnt/myfolder`. Any standard Linux file command run here will be converted into SQL. |
+| **Linux Container**<br>`root@...:/app#` | **5. Create Folder** | `mkdir -p /mnt/myfolder/documents` | *(Silent return, exit code 0)* | Standard Linux `mkdir` worked! In PostgreSQL, a new directory Inode is created and linked to root (`/`). |
+| **Linux Container**<br>`root@...:/app#` | **6. Write File** | `echo "Hello pgfuse!" > /mnt/myfolder/documents/test.txt` | *(Silent return, exit code 0)* | The Linux kernel called `create()` and `write()`. `pgfuse` saved a 14-byte binary block into PostgreSQL and registered `test.txt` inside `documents`. |
+| **Linux Container**<br>`root@...:/app#` | **7. Read File** | `cat /mnt/myfolder/documents/test.txt` | `Hello pgfuse!` | `pgfuse` fetched the 64KB binary chunk from PostgreSQL across the socket and displayed the text to your terminal. |
+| **Linux Container**<br>`root@...:/app#` | **8. Inspect Metadata** | `stat /mnt/myfolder/documents/test.txt` | `File: .../test.txt`<br>`Size: 14  Blocks: 1  IO Block: 65536 regular file`<br>`Inode: 3  Links: 1  Access: (0644/-rw-r--r--)` | Calls `getattr()`. Returns exact file metadata from `pgfuse_inodes`: size (14 bytes), 64KB block geometry, Inode ID 3, permissions, and timestamps. |
+| **Linux Container**<br>`root@...:/app#` | **9. Check Directory in SQL** | `sudo -u postgres psql -d pgfs -c "SELECT * FROM pgfuse_dentries;"` | ` parent_ino \|   name    \| ino `<br>`------------+-----------+-----`<br>`          1 \| documents \|   2`<br>`          2 \| test.txt  \|   3` | **Direct proof!** Shows the directory tree in PostgreSQL: root (Inode 1) holds `documents` (Inode 2), and `documents` holds `test.txt` (Inode 3). |
+| **Linux Container**<br>`root@...:/app#` | **10. Check Data Chunks in SQL** | `sudo -u postgres psql -d pgfs -c "SELECT ino, chunk_index, chunk_size FROM pgfuse_chunks;"` | ` ino \| chunk_index \| chunk_size `<br>`-----+-------------+------------`<br>`   3 \|           0 \|         14` | Proves that file content is stored directly inside the PostgreSQL `pgfuse_chunks` table as a 64KB binary block. |
+| **Linux Container**<br>`root@...:/app#` | **11. Storage Summary View** | `sudo -u postgres psql -d pgfs -c "SELECT * FROM v_pgfuse_storage_summary;"` | ` total_files \| total_directories \| total_chunks \| logical_bytes_used \| physical_bytes_stored `<br>`-------------+-------------------+--------------+--------------------+-----------------------`<br>`           1 \|                 2 \|            1 \|                 14 \|                    14` | Built-in SQL view calculating summary metrics across all tables: 1 file, 2 directories (including root), 1 chunk, and 14 bytes stored. |
+| **Linux Container**<br>`root@...:/app#` | **12. Unmount Filesystem** | `fusermount3 -u /mnt/myfolder` | `[PGFUSE-INFO] Unmounting filesystem. Draining connection pool...`<br>`[PGFUSE-INFO] Teardown complete. Clean exit.` | Safely unmounts the virtual folder and closes all 8 database connections cleanly without leaking memory or locks. |
+
+---
+
+## 💻 Step-by-Step Interactive Walkthrough
+
+If you want to run the demonstration step-by-step:
+
+### Step 1: In Windows PowerShell, start the Docker container
+```powershell
 docker run --privileged -it --rm pgfuse
 ```
 *(The `--privileged` flag is required because FUSE mounts a virtual filesystem inside the Linux kernel).*
 
-Once started, the container automatically starts PostgreSQL, creates the database, loads `sql/schema.sql`, compiles `pgfuse`, and gives you a bash shell.
+Once running, your prompt will change to:
+```text
+root@b774f64f403c:/app#
+```
 
 ---
 
-## 📊 Command & Output Reference Table
-
-The table below gives every command you need to run, what the terminal outputs, and what the output actually means in simple English:
-
-| Step / Action | Command to Run | Expected Output | Easy Explanation of Output |
-| :--- | :--- | :--- | :--- |
-| **1. Mount Filesystem** | `mkdir -p /mnt/myfolder`<br>`./pgfuse /mnt/myfolder` | `==========================================================`<br>` pgfuse: PostgreSQL-Backed Virtual File System`<br>` Engine: 1.0.0 \| Extents: 64 KB \| Pool: 8 Channels`<br>` Status: Active Mount - ACID POSIX VFS Translation Live`<br>`==========================================================` | **The virtual disk is alive!** Connects 8 database channels to PostgreSQL and attaches the filesystem to `/mnt/myfolder`. Any standard file command run here will be intercepted by `pgfuse` and converted into SQL. |
-| **2. Create Directory** | `mkdir -p /mnt/myfolder/documents` | *(Silent return, exit code 0)* | Standard Linux `mkdir` worked! In PostgreSQL, a new directory Inode is created with permissions and linked to root (`/`). |
-| **3. Write File** | `echo "Hello pgfuse!" > /mnt/myfolder/documents/test.txt` | *(Silent return, exit code 0)* | The Linux kernel called `create()` and `write()`. `pgfuse` wrote a 14-byte binary block into PostgreSQL and linked `test.txt` inside `documents`. |
-| **4. Read File** | `cat /mnt/myfolder/documents/test.txt` | `Hello pgfuse!` | `pgfuse` fetched the 64KB binary chunk from PostgreSQL across the socket and printed the exact text to your terminal. |
-| **5. Inspect Metadata** | `stat /mnt/myfolder/documents/test.txt` | `File: .../test.txt`<br>`Size: 14  Blocks: 1  IO Block: 65536 regular file`<br>`Inode: 3  Links: 1  Access: (0644/-rw-r--r--)` | Calls `getattr()`. Returns exact file metadata from `pgfuse_inodes`: size (14 bytes), 64KB block geometry, Inode ID 3, permissions, and timestamps. |
-| **6. Check Directory in SQL** | `sudo -u postgres psql -d pgfs -c "SELECT * FROM pgfuse_dentries;"` | ` parent_ino \|   name    \| ino `<br>`------------+-----------+-----`<br>`          1 \| documents \|   2`<br>`          2 \| test.txt  \|   3` | **Direct proof!** This shows the folder tree in PostgreSQL: root (Inode 1) holds `documents` (Inode 2), and `documents` holds `test.txt` (Inode 3). |
-| **7. Check Data in SQL** | `sudo -u postgres psql -d pgfs -c "SELECT ino, chunk_index, chunk_size FROM pgfuse_chunks;"` | ` ino \| chunk_index \| chunk_size `<br>`-----+-------------+------------`<br>`   3 \|           0 \|         14` | Proves that the file content is stored directly inside the PostgreSQL `pgfuse_chunks` table as a 64KB binary block. |
-| **8. Storage Summary** | `sudo -u postgres psql -d pgfs -c "SELECT * FROM v_pgfuse_storage_summary;"` | ` total_files \| total_directories \| total_chunks \| logical_bytes_used \| physical_bytes_stored `<br>`-------------+-------------------+--------------+--------------------+-----------------------`<br>`           1 \|                 2 \|            1 \|                 14 \|                    14` | Built-in SQL view calculating summary metrics across all tables: 1 file, 2 directories (including root), 1 chunk, and 14 bytes stored. |
-| **9. Unmount Filesystem** | `fusermount3 -u /mnt/myfolder` | `[PGFUSE-INFO] Unmounting filesystem. Draining connection pool...`<br>`[PGFUSE-INFO] Teardown complete. Clean exit.` | Safely unmounts the virtual folder and closes all 8 database connections cleanly without leaking memory or locks. |
-
----
-
-## 💻 Interactive Usage & Verification
-
-Here is an end-to-end verification workflow demonstrating the virtual filesystem in action:
-
-### Step 1: Create a mount point and mount `pgfuse`
+### Step 2: Mount the virtual filesystem
 ```bash
 mkdir -p /mnt/myfolder
 ./pgfuse /mnt/myfolder
@@ -125,7 +134,7 @@ mkdir -p /mnt/myfolder
 
 ---
 
-### Step 2: Create a directory and write a file
+### Step 3: Create a directory and write a file
 ```bash
 mkdir -p /mnt/myfolder/documents
 echo "Hello from pgfuse! This text is stored in PostgreSQL." > /mnt/myfolder/documents/test.txt
@@ -135,7 +144,7 @@ cat /mnt/myfolder/documents/test.txt
 
 ---
 
-### Step 3: Inspect file metadata with `stat` and `ls -la`
+### Step 4: Inspect file metadata with `stat` and `ls -la`
 ```bash
 ls -la /mnt/myfolder/documents
 stat /mnt/myfolder/documents/test.txt
@@ -144,13 +153,11 @@ stat /mnt/myfolder/documents/test.txt
 
 ---
 
-### Step 4: Inspect relational storage in PostgreSQL
+### Step 5: Inspect relational storage in PostgreSQL
 Check the directory hierarchy:
 ```bash
 sudo -u postgres psql -d pgfs -c "SELECT * FROM pgfuse_dentries;"
 ```
-* `documents` maps to its directory Inode ID.
-* `test.txt` inside `documents` maps to its file Inode ID.
 
 Check the 64KB chunk storage:
 ```bash
@@ -165,16 +172,16 @@ sudo -u postgres psql -d pgfs -c "SELECT * FROM v_pgfuse_storage_summary;"
 
 ---
 
-### Step 5: Unmount when finished
+### Step 6: Unmount when finished
 ```bash
 fusermount3 -u /mnt/myfolder
 ```
 
 ---
 
-## 🛠️ Native Build (Without Docker)
+## 🛠️ Native Linux Build (Without Docker)
 
-For environments running Ubuntu/Debian with a local PostgreSQL instance:
+For native Linux systems (Ubuntu/Debian) with a local PostgreSQL instance:
 
 ### 1. Install prerequisites
 ```bash

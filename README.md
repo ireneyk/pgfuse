@@ -94,6 +94,24 @@ Once started, the container automatically starts PostgreSQL, creates the databas
 
 ---
 
+## 📊 Command & Output Reference Table
+
+The table below gives every command you need to run, what the terminal outputs, and what the output actually means in simple English:
+
+| Step / Action | Command to Run | Expected Output | Easy Explanation of Output |
+| :--- | :--- | :--- | :--- |
+| **1. Mount Filesystem** | `mkdir -p /mnt/myfolder`<br>`./pgfuse /mnt/myfolder` | `==========================================================`<br>` pgfuse: PostgreSQL-Backed Virtual File System`<br>` Engine: 1.0.0 \| Extents: 64 KB \| Pool: 8 Channels`<br>` Status: Active Mount - ACID POSIX VFS Translation Live`<br>`==========================================================` | **The virtual disk is alive!** Connects 8 database channels to PostgreSQL and attaches the filesystem to `/mnt/myfolder`. Any standard file command run here will be intercepted by `pgfuse` and converted into SQL. |
+| **2. Create Directory** | `mkdir -p /mnt/myfolder/documents` | *(Silent return, exit code 0)* | Standard Linux `mkdir` worked! In PostgreSQL, a new directory Inode is created with permissions and linked to root (`/`). |
+| **3. Write File** | `echo "Hello pgfuse!" > /mnt/myfolder/documents/test.txt` | *(Silent return, exit code 0)* | The Linux kernel called `create()` and `write()`. `pgfuse` wrote a 14-byte binary block into PostgreSQL and linked `test.txt` inside `documents`. |
+| **4. Read File** | `cat /mnt/myfolder/documents/test.txt` | `Hello pgfuse!` | `pgfuse` fetched the 64KB binary chunk from PostgreSQL across the socket and printed the exact text to your terminal. |
+| **5. Inspect Metadata** | `stat /mnt/myfolder/documents/test.txt` | `File: .../test.txt`<br>`Size: 14  Blocks: 1  IO Block: 65536 regular file`<br>`Inode: 3  Links: 1  Access: (0644/-rw-r--r--)` | Calls `getattr()`. Returns exact file metadata from `pgfuse_inodes`: size (14 bytes), 64KB block geometry, Inode ID 3, permissions, and timestamps. |
+| **6. Check Directory in SQL** | `sudo -u postgres psql -d pgfs -c "SELECT * FROM pgfuse_dentries;"` | ` parent_ino \|   name    \| ino `<br>`------------+-----------+-----`<br>`          1 \| documents \|   2`<br>`          2 \| test.txt  \|   3` | **Direct proof!** This shows the folder tree in PostgreSQL: root (Inode 1) holds `documents` (Inode 2), and `documents` holds `test.txt` (Inode 3). |
+| **7. Check Data in SQL** | `sudo -u postgres psql -d pgfs -c "SELECT ino, chunk_index, chunk_size FROM pgfuse_chunks;"` | ` ino \| chunk_index \| chunk_size `<br>`-----+-------------+------------`<br>`   3 \|           0 \|         14` | Proves that the file content is stored directly inside the PostgreSQL `pgfuse_chunks` table as a 64KB binary block. |
+| **8. Storage Summary** | `sudo -u postgres psql -d pgfs -c "SELECT * FROM v_pgfuse_storage_summary;"` | ` total_files \| total_directories \| total_chunks \| logical_bytes_used \| physical_bytes_stored `<br>`-------------+-------------------+--------------+--------------------+-----------------------`<br>`           1 \|                 2 \|            1 \|                 14 \|                    14` | Built-in SQL view calculating summary metrics across all tables: 1 file, 2 directories (including root), 1 chunk, and 14 bytes stored. |
+| **9. Unmount Filesystem** | `fusermount3 -u /mnt/myfolder` | `[PGFUSE-INFO] Unmounting filesystem. Draining connection pool...`<br>`[PGFUSE-INFO] Teardown complete. Clean exit.` | Safely unmounts the virtual folder and closes all 8 database connections cleanly without leaking memory or locks. |
+
+---
+
 ## 💻 Interactive Usage & Verification
 
 Here is an end-to-end verification workflow demonstrating the virtual filesystem in action:
